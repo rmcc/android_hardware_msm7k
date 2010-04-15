@@ -1,0 +1,1 @@
+Changes based on the version from replicant @ http://gitorious.org/replicant/msm7k

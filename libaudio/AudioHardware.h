@@ -130,7 +130,7 @@ public:
                                 int channelCount,
                                 uint32_t sampleRate,
                                 status_t *status,
-                                AudioSystem::audio_in_acoustics acoustics);
+				AudioSystem::audio_in_acoustics acoustic_flags);
 
                void        closeOutputStream(AudioStreamOutMSM72xx* out);
                void        closeInputStream(AudioStreamInMSM72xx* in);
@@ -191,8 +191,7 @@ private:
                 status_t    set(AudioHardware* mHardware,
                                 int format,
                                 int channelCount,
-                                uint32_t sampleRate,
-                                AudioSystem::audio_in_acoustics acoustics);
+                                uint32_t sampleRate);
         virtual size_t      bufferSize() const { return mBufferSize; }
         virtual int         channelCount() const { return mChannelCount; }
         virtual int         format() const { return mFormat; }
@@ -211,7 +210,6 @@ private:
                 int         mChannelCount;
                 uint32_t    mSampleRate;
                 size_t      mBufferSize;
-                AudioSystem::audio_in_acoustics mAcoustics;
     };
 
             static const uint32_t inputSamplingRates[];
