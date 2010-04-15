@@ -124,7 +124,8 @@ set_light_backlight(struct light_device_t* dev,
     int brightness = rgb_to_brightness(state);
     pthread_mutex_lock(&g_lock);
     g_backlight = brightness;
-    err = write_int("/sys/class/leds/lcd-backlight/brightness", brightness);
+    //err = write_int("/sys/class/leds/lcd-backlight/brightness", brightness);
+    err = write_int("/sys/class/backlight/msmfb_bl0/brightness", brightness);
     if (g_haveTrackballLight) {
         handle_trackball_light_locked(dev);
     }
@@ -137,10 +138,21 @@ set_light_keyboard(struct light_device_t* dev,
         struct light_state_t const* state)
 {
     int err = 0;
-    int on = is_lit(state);
-    pthread_mutex_lock(&g_lock);
-    err = write_int("/sys/class/leds/keyboard-backlight/brightness", on?255:0);
-    pthread_mutex_unlock(&g_lock);
+    if (state->flashMode) {
+        /* keyboards don't flash, but we can use the fields to carry the keyboard
+         * lighting data... :)
+         * ALT - 2 for on, 3 for off
+         * Caps - 4 for on, 5 for off */
+    	//LOGD("Write key state %i / %i",state->flashOnMS, state->flashMode);
+    	pthread_mutex_lock(&g_lock);
+    	write_int("/sys/class/i2c-adapter/i2c-0/0-0040/caps_fn_leds", state->flashOnMS);
+    	pthread_mutex_unlock(&g_lock);
+    } else {
+    	int on = is_lit(state);
+    	pthread_mutex_lock(&g_lock);
+    	err = write_int("/sys/class/i2c-adapter/i2c-0/0-0040/brightness", on?255:0);
+    	pthread_mutex_unlock(&g_lock);
+    }
     return err;
 }
 
@@ -152,7 +164,8 @@ set_light_buttons(struct light_device_t* dev,
     int on = is_lit(state);
     pthread_mutex_lock(&g_lock);
     g_buttons = on;
-    err = write_int("/sys/class/leds/button-backlight/brightness", on?255:0);
+    //err = write_int("/sys/class/leds/button-backlight/brightness", on?255:0);
+    err = write_int("/sys/class/i2c-adapter/i2c-0/0-0040/btn_brightness", on?255:0);
     pthread_mutex_unlock(&g_lock);
     return err;
 }
@@ -253,7 +266,7 @@ static int
 set_light_notifications(struct light_device_t* dev,
         struct light_state_t const* state)
 {
-    pthread_mutex_lock(&g_lock);
+    /*pthread_mutex_lock(&g_lock);
     g_notification = *state;
     LOGV("set_light_notifications g_trackball=%d color=0x%08x",
             g_trackball, state->color);
@@ -261,6 +274,11 @@ set_light_notifications(struct light_device_t* dev,
         handle_trackball_light_locked(dev);
     }
     handle_speaker_battery_locked(dev);
+    pthread_mutex_unlock(&g_lock);*/
+    /* RC was here : 0 - off, 1 - fixed, 2 - blink */
+    int on = is_lit(state);
+    pthread_mutex_lock(&g_lock);
+    write_int("/sys/class/i2c-adapter/i2c-0/0-0040/blink", on ? 2 : 0);
     pthread_mutex_unlock(&g_lock);
     return 0;
 }
@@ -269,7 +287,7 @@ static int
 set_light_attention(struct light_device_t* dev,
         struct light_state_t const* state)
 {
-    pthread_mutex_lock(&g_lock);
+    /*pthread_mutex_lock(&g_lock);
     g_notification = *state;
     LOGV("set_light_attention g_trackball=%d color=0x%08x",
             g_trackball, state->color);
@@ -277,7 +295,14 @@ set_light_attention(struct light_device_t* dev,
     if (g_haveTrackballLight) {
         handle_trackball_light_locked(dev);
     }
+    pthread_mutex_unlock(&g_lock);*/
+    /* RC was here : 0 - off, 1 - fixed, 2 - blink */
+    /* don't do anything, or we'll wipe the notification...
+    pthread_mutex_lock(&g_lock);
+    LOGD("Attempting to put attention of color %i\n", state->color);
+    write_int("/sys/class/i2c-adapter/i2c-0/0-0040/blink", state->color);
     pthread_mutex_unlock(&g_lock);
+    */
     return 0;
 }
 
@@ -321,9 +346,9 @@ static int open_lights(const struct hw_module_t* module, char const* name,
     else if (0 == strcmp(LIGHT_ID_NOTIFICATIONS, name)) {
         set_light = set_light_notifications;
     }
-    else if (0 == strcmp(LIGHT_ID_ATTENTION, name)) {
+    /*else if (0 == strcmp(LIGHT_ID_ATTENTION, name)) {
         set_light = set_light_attention;
-    }
+    }*/
     else {
         return -EINVAL;
     }
