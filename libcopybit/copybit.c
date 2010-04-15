@@ -172,8 +172,21 @@ static void set_infos(struct copybit_context_t *dev, struct mdp_blit_req *req) {
 /** copy the bits */
 static int msm_copybit(struct copybit_context_t *dev, void const *list) 
 {
+    struct mdp_blit_req_list *test;
+    test  = (struct mdp_blit_req_list *)list;
+    unsigned int i;
+    for (i=0; i<test->count; i++) {
+	test->req[i] = (struct mdp_blit_req)test->req[i];
+        test->req[i].sharpening_strength = 64;
+    }
+
     int err = ioctl(dev->mFD, MSMFB_BLIT,
-                    (struct mdp_blit_req_list const*)list);
+                    test);
+                    //(struct mdp_blit_req_list const*)list);
+
+
+    //COPYING FROM ASHMEM WILL FAIL
+    LOGE_IF(err<0, "copyBits test (count = %d, flags of 0: %d/%d/%d/%d, sharpening: %d)", test->count,test->req[0].src.memory_id,test->req[0].dst.memory_id,test->req[0].alpha,test->req[0].transp_mask,dev->mFD);
     LOGE_IF(err<0, "copyBits failed (%s)", strerror(errno));
     if (err == 0)
         return 0;
@@ -228,6 +241,7 @@ static int set_parameter_copybit(
                 ctx->mFlags &= ~MDP_DITHER;
             }
             break;
+#ifdef MDP_BLUR
         case COPYBIT_BLUR:
             if (value == COPYBIT_ENABLE) {
                 ctx->mFlags |= MDP_BLUR;
@@ -235,6 +249,7 @@ static int set_parameter_copybit(
                 ctx->mFlags &= ~MDP_BLUR;
             }
             break;
+#endif
         case COPYBIT_TRANSFORM:
             ctx->mFlags &= ~0x7;
             ctx->mFlags |= value & 0x7;
@@ -363,9 +378,6 @@ static int open_copybit(const struct hw_module_t* module, const char* name,
     struct copybit_context_t *ctx = malloc(sizeof(struct copybit_context_t));
     memset(ctx, 0, sizeof(*ctx));
 
-    ctx->device.common.tag = HARDWARE_DEVICE_TAG;
-    ctx->device.common.version = 0;
-    ctx->device.common.module = module;
     ctx->device.common.close = close_copybit;
     ctx->device.set_parameter = set_parameter_copybit;
     ctx->device.get = get;
@@ -383,7 +395,7 @@ static int open_copybit(const struct hw_module_t* module, const char* name,
     } else {
         struct fb_fix_screeninfo finfo;
         if (ioctl(ctx->mFD, FBIOGET_FSCREENINFO, &finfo) == 0) {
-            if (strcmp(finfo.id, "msmfb") == 0) {
+            if (strncmp(finfo.id, "msmfb", 5) == 0) {
                 /* Success */
                 status = 0;
             } else {
