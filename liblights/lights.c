@@ -58,10 +58,10 @@ char const*const BLUE_LED_FILE
         = "/sys/class/leds/blue/brightness";
 
 char const*const AMBER_LED_FILE
-        = "/sys/class/leds/amber/brightness";
+        = "/sys/class/leds/red/brightness";
 
 char const*const LCD_FILE
-        = "/sys/class/leds/lcd-backlight/brightness";
+        = "/sys/class/backlight/msmfb_bl0/brightness";
 
 char const*const RED_FREQ_FILE
         = "/sys/class/leds/red/device/grpfreq";
@@ -70,16 +70,16 @@ char const*const RED_PWM_FILE
         = "/sys/class/leds/red/device/grppwm";
 
 char const*const RED_BLINK_FILE
-        = "/sys/class/leds/red/device/blink";
+        = "/sys/class/leds/red/blink";
 
 char const*const AMBER_BLINK_FILE
-        = "/sys/class/leds/amber/blink";
+        = "/sys/class/leds/red/blink";
 
 char const*const KEYBOARD_FILE
-        = "/sys/class/leds/keyboard-backlight/brightness";
+        = "/sys/class/i2c-adapter/i2c-0/0-0040/brightness";
 
 char const*const BUTTON_FILE
-        = "/sys/class/leds/button-backlight/brightness";
+        = "/sys/class/i2c-adapter/i2c-0/0-0040/btn_brightness";
 
 /**
  * device methods
@@ -175,10 +175,21 @@ set_light_keyboard(struct light_device_t* dev,
         struct light_state_t const* state)
 {
     int err = 0;
-    int on = is_lit(state);
+    if (state->flashMode) {
+        /* keyboards don't flash, but we can use the fields to carry the keyboard
+         * lighting data... :)
+         * ALT - 2 for on, 3 for off
+         * Caps - 4 for on, 5 for off */
+       //LOGD("Write key state %i / %i",state->flashOnMS, state->flashMode);
+       pthread_mutex_lock(&g_lock);
+       write_int("/sys/class/i2c-adapter/i2c-0/0-0040/caps_fn_leds", state->flashOnMS);
+       pthread_mutex_unlock(&g_lock);
+    } else {
+
     pthread_mutex_lock(&g_lock);
-    err = write_int(KEYBOARD_FILE, on?255:0);
+    err = write_int(KEYBOARD_FILE, rgb_to_brightness(state));
     pthread_mutex_unlock(&g_lock);
+    }
     return err;
 }
 
@@ -275,6 +286,8 @@ set_speaker_light_locked(struct light_device_t* dev,
         }
         write_int(RED_BLINK_FILE, blink);
     } else {
+        if (blink) 
+			write_int(AMBER_LED_FILE, 0);
         write_int(AMBER_BLINK_FILE, blink);
     }
 
@@ -309,7 +322,7 @@ static int
 set_light_notifications(struct light_device_t* dev,
         struct light_state_t const* state)
 {
-    pthread_mutex_lock(&g_lock);
+    /*pthread_mutex_lock(&g_lock);
     g_notification = *state;
     LOGV("set_light_notifications g_trackball=%d color=0x%08x",
             g_trackball, state->color);
@@ -317,6 +330,11 @@ set_light_notifications(struct light_device_t* dev,
         handle_trackball_light_locked(dev);
     }
     handle_speaker_battery_locked(dev);
+    pthread_mutex_unlock(&g_lock);*/
+    /* RC was here : 0 - off, 1 - fixed, 2 - blink */
+    int on = is_lit(state);
+    pthread_mutex_lock(&g_lock);
+    write_int("/sys/class/i2c-adapter/i2c-0/0-0040/blink", on ? 2 : 0);
     pthread_mutex_unlock(&g_lock);
     return 0;
 }
@@ -325,7 +343,7 @@ static int
 set_light_attention(struct light_device_t* dev,
         struct light_state_t const* state)
 {
-    pthread_mutex_lock(&g_lock);
+    /*pthread_mutex_lock(&g_lock);
     LOGV("set_light_attention g_trackball=%d color=0x%08x",
             g_trackball, state->color);
     if (state->flashMode == LIGHT_FLASH_HARDWARE) {
@@ -336,8 +354,20 @@ set_light_attention(struct light_device_t* dev,
     if (g_haveTrackballLight) {
         handle_trackball_light_locked(dev);
     }
+    pthread_mutex_unlock(&g_lock);*/
+    /* RC was here : 0 - off, 1 - fixed, 2 - blink */
+    int on = is_lit(state);
+    pthread_mutex_lock(&g_lock);
+    write_int("/sys/class/i2c-adapter/i2c-0/0-0040/blink", on ? 1 : 0);
     pthread_mutex_unlock(&g_lock);
     return 0;
+    /* don't do anything, or we'll wipe the notification...
+    pthread_mutex_lock(&g_lock);
+    LOGD("Attempting to put attention of color %i\n", state->color);
+    write_int("/sys/class/i2c-adapter/i2c-0/0-0040/blink", state->color);
+    pthread_mutex_unlock(&g_lock);
+    return 0;
+    */
 }
 
 
@@ -380,9 +410,9 @@ static int open_lights(const struct hw_module_t* module, char const* name,
     else if (0 == strcmp(LIGHT_ID_NOTIFICATIONS, name)) {
         set_light = set_light_notifications;
     }
-    else if (0 == strcmp(LIGHT_ID_ATTENTION, name)) {
+    /*else if (0 == strcmp(LIGHT_ID_ATTENTION, name)) {
         set_light = set_light_attention;
-    }
+    }*/
     else {
         return -EINVAL;
     }

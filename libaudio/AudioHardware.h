@@ -204,8 +204,7 @@ private:
                                 uint32_t devices,
                                 int *pFormat,
                                 uint32_t *pChannels,
-                                uint32_t *pRate,
-                                AudioSystem::audio_in_acoustics acoustics);
+                                uint32_t *pRate);
         virtual size_t      bufferSize() const { return mBufferSize; }
         virtual uint32_t    channels() const { return mChannels; }
         virtual int         format() const { return mFormat; }
@@ -229,7 +228,6 @@ private:
                 uint32_t    mChannels;
                 uint32_t    mSampleRate;
                 size_t      mBufferSize;
-                AudioSystem::audio_in_acoustics mAcoustics;
                 uint32_t    mDevices;
     };
 

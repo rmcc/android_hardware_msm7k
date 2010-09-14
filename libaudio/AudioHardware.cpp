@@ -37,12 +37,45 @@
 #define LOG_SND_RPC 0  // Set to 1 to log sound RPC's
 
 namespace android {
-static int audpre_index, tx_iir_index;
-static void * acoustic;
 const uint32_t AudioHardware::inputSamplingRates[] = {
         8000, 11025, 12000, 16000, 22050, 24000, 32000, 44100, 48000
 };
 // ----------------------------------------------------------------------------
+
+static int snd_get_endpoint(int cnt,msm_snd_endpoint * ept)
+{
+    int fd;
+    int status;
+    fd = open("/dev/msm_snd",O_RDWR);
+    if (fd < 0) {
+       LOGE("Cannot open msm_snd device");
+       close(fd);
+       return -1;
+    }
+    status = ioctl(fd,SND_GET_ENDPOINT, ept);
+    close(fd);
+    return status;
+}
+
+static int snd_get_num()
+{
+    int fd;
+    int status;
+    int mNumSndEndpoints;
+    fd = open("/dev/msm_snd",O_RDWR);
+    if (fd < 0) {
+       LOGE("Cannot open msm_snd device");
+       return -1;
+    }
+
+    if(ioctl(fd,SND_GET_NUM_ENDPOINTS,&mNumSndEndpoints)<0 ) {
+       LOGE("get number of endpoints error");
+       close(fd);
+       return -1;
+    }
+    close(fd);
+    return mNumSndEndpoints;
+}
 
 AudioHardware::AudioHardware() :
     mInit(false), mMicMute(true), mBluetoothNrec(true), mBluetoothId(0),
@@ -63,50 +96,15 @@ AudioHardware::AudioHardware() :
     SND_DEVICE_BT_EC_OFF(-1)
 {
 
-    int (*snd_get_num)();
-    int (*snd_get_endpoint)(int, msm_snd_endpoint *);
-    int (*set_acoustic_parameters)();
-
     struct msm_snd_endpoint *ept;
 
-    acoustic = ::dlopen("/system/lib/libhtc_acoustic.so", RTLD_NOW);
-    if (acoustic == NULL ) {
-        LOGE("Could not open libhtc_acoustic.so");
-        /* this is not really an error on non-htc devices... */
-        mNumSndEndpoints = 0;
-        mInit = true;
-        return;
-    }
-
-    set_acoustic_parameters = (int (*)(void))::dlsym(acoustic, "set_acoustic_parameters");
-    if ((*set_acoustic_parameters) == 0 ) {
-        LOGE("Could not open set_acoustic_parameters()");
-        return;
-    }
-
-    int rc = set_acoustic_parameters();
-    if (rc < 0) {
-        LOGE("Could not set acoustic parameters to share memory: %d", rc);
-//        return;
-    }
-
-    snd_get_num = (int (*)(void))::dlsym(acoustic, "snd_get_num_endpoints");
-    if ((*snd_get_num) == 0 ) {
-        LOGE("Could not open snd_get_num()");
-//        return;
-    }
 
     mNumSndEndpoints = snd_get_num();
     LOGD("mNumSndEndpoints = %d", mNumSndEndpoints);
     mSndEndpoints = new msm_snd_endpoint[mNumSndEndpoints];
     mInit = true;
     LOGV("constructed %d SND endpoints)", mNumSndEndpoints);
-    ept = mSndEndpoints;
-    snd_get_endpoint = (int (*)(int, msm_snd_endpoint *))::dlsym(acoustic, "snd_get_endpoint");
-    if ((*snd_get_endpoint) == 0 ) {
-        LOGE("Could not open snd_get_endpoint()");
-        return;
-    }
+    ept = mSndEndpoints; //LOOK AT mSndEndpoints type...
 
     for (int cnt = 0; cnt < mNumSndEndpoints; cnt++, ept++) {
         ept->id = cnt;
@@ -132,6 +130,10 @@ AudioHardware::AudioHardware() :
         CHECK_FOR(HEADSET_AND_SPEAKER) {}
 #undef CHECK_FOR
     }
+    // No BT noise cancellation endpoint, so set it to be the same
+    // as regular BT, or else we'll get bad routes with devices issue
+    // NREC=0
+    SND_DEVICE_BT_EC_OFF = SND_DEVICE_BT;
 }
 
 AudioHardware::~AudioHardware()
@@ -142,10 +144,6 @@ AudioHardware::~AudioHardware()
     mInputs.clear();
     closeOutputStream((AudioStreamOut*)mOutput);
     delete [] mSndEndpoints;
-    if (acoustic) {
-        ::dlclose(acoustic);
-        acoustic = 0;
-    }
     mInit = false;
 }
 
@@ -206,7 +204,7 @@ AudioStreamIn* AudioHardware::openInputStream(
     mLock.lock();
 
     AudioStreamInMSM72xx* in = new AudioStreamInMSM72xx();
-    status_t lStatus = in->set(this, devices, format, channels, sampleRate, acoustic_flags);
+    status_t lStatus = in->set(this, devices, format, channels, sampleRate);
     if (status) {
         *status = lStatus;
     }
@@ -235,6 +233,41 @@ void AudioHardware::closeInputStream(AudioStreamIn* in) {
         mInputs.removeAt(index);
     }
 }
+
+static int msm72xx_enable_audpp (uint16_t enable_mask)
+{
+    int fd;
+
+//    if (!audpp_filter_inited)
+//        return -1;
+
+    fd = open ("/dev/msm_pcm_ctl", O_RDWR);
+    if (fd < 0) {
+        LOGE ("Cannot open audio device");
+        return -1;
+    }
+
+    if (enable_mask & ADRC_ENABLE) {
+        enable_mask &= ~ADRC_ENABLE;
+    }
+    if (enable_mask & EQ_ENABLE) {
+        enable_mask &= ~EQ_ENABLE;
+    }
+    if (enable_mask & RX_IIR_ENABLE) {
+        enable_mask &= ~RX_IIR_ENABLE;
+    }
+
+    printf ("msm72xx_enable_audpp: 0x%04x", enable_mask);
+    if (ioctl (fd, AUDIO_ENABLE_AUDPP, &enable_mask) < 0) {
+       LOGE ("enable audpp error");
+       close (fd);
+       return -1;
+    }
+
+    close (fd);
+    return 0;
+}
+
 
 status_t AudioHardware::setMode(int mode)
 {
@@ -265,6 +298,7 @@ status_t AudioHardware::setMicMute(bool state)
 // always call with mutex held
 status_t AudioHardware::setMicMute_nosync(bool state)
 {
+    LOGV("Called Mic Mute with state %d",state);
     if (mMicMute != state) {
         mMicMute = state;
         return doAudioRouteOrMute(SND_DEVICE_CURRENT);
@@ -420,12 +454,10 @@ status_t AudioHardware::setMasterVolume(float v)
     Mutex::Autolock lock(mLock);
     int vol = ceil(v * 5.0);
     LOGI("Set master volume to %d.\n", vol);
-    /*
     set_volume_rpc(SND_DEVICE_HANDSET, SND_METHOD_VOICE, vol);
     set_volume_rpc(SND_DEVICE_SPEAKER, SND_METHOD_VOICE, vol);
     set_volume_rpc(SND_DEVICE_BT,      SND_METHOD_VOICE, vol);
     set_volume_rpc(SND_DEVICE_HEADSET, SND_METHOD_VOICE, vol);
-    */
     // We return an error code here to let the audioflinger do in-software
     // volume on top of the maximum volume that we set through the SND API.
     // return error - software mixer will handle it
@@ -483,6 +515,8 @@ status_t AudioHardware::doAudioRouteOrMute(uint32_t device)
             device = SND_DEVICE_BT_EC_OFF;
         }
     }
+    // What the hell? Why is this always 1 when getting here?
+    mMicMute = 0;
     LOGV("doAudioRouteOrMute() device %x, mMode %d, mMicMute %d", device, mMode, mMicMute);
     return do_route_audio_rpc(device,
                               mMode != AudioSystem::MODE_IN_CALL, mMicMute);
@@ -490,15 +524,9 @@ status_t AudioHardware::doAudioRouteOrMute(uint32_t device)
 
 status_t AudioHardware::doRouting()
 {
-    /* currently this code doesn't work without the htc libacoustic */
-    if (!acoustic)
-        return 0;
-
     Mutex::Autolock lock(mLock);
     uint32_t outputDevices = mOutput->devices();
     status_t ret = NO_ERROR;
-    int (*msm72xx_enable_audpp)(int);
-    msm72xx_enable_audpp = (int (*)(int))::dlsym(acoustic, "msm72xx_enable_audpp");
     int audProcess = (ADRC_DISABLE | EQ_DISABLE | RX_IIR_DISABLE);
     AudioStreamInMSM72xx *input = getActiveInput_l();
     uint32_t inputDevice = (input == NULL) ? 0 : input->devices();
@@ -576,11 +604,7 @@ status_t AudioHardware::doRouting()
 
     if (sndDevice != -1 && sndDevice != mCurSndDevice) {
         ret = doAudioRouteOrMute(sndDevice);
-        if ((*msm72xx_enable_audpp) == 0 ) {
-            LOGE("Could not open msm72xx_enable_audpp()");
-        } else {
-            msm72xx_enable_audpp(audProcess);
-        }
+        msm72xx_enable_audpp(audProcess);
         mCurSndDevice = sndDevice;
     }
 
@@ -873,13 +897,12 @@ AudioHardware::AudioStreamInMSM72xx::AudioStreamInMSM72xx() :
     mHardware(0), mFd(-1), mState(AUDIO_INPUT_CLOSED), mRetryCount(0),
     mFormat(AUDIO_HW_IN_FORMAT), mChannels(AUDIO_HW_IN_CHANNELS),
     mSampleRate(AUDIO_HW_IN_SAMPLERATE), mBufferSize(AUDIO_HW_IN_BUFFERSIZE),
-    mAcoustics((AudioSystem::audio_in_acoustics)0), mDevices(0)
+    mDevices(0)
 {
 }
 
 status_t AudioHardware::AudioStreamInMSM72xx::set(
-        AudioHardware* hw, uint32_t devices, int *pFormat, uint32_t *pChannels, uint32_t *pRate,
-        AudioSystem::audio_in_acoustics acoustic_flags)
+        AudioHardware* hw, uint32_t devices, int *pFormat, uint32_t *pChannels, uint32_t *pRate)
 {
     if (pFormat == 0 || *pFormat != AUDIO_HW_IN_FORMAT) {
         *pFormat = AUDIO_HW_IN_FORMAT;
@@ -962,31 +985,9 @@ status_t AudioHardware::AudioStreamInMSM72xx::set(
     mSampleRate = config.sample_rate;
     mBufferSize = config.buffer_size;
 
+    //LOGV("This would have set micmute to false!");
     //mHardware->setMicMute_nosync(false);
     mState = AUDIO_INPUT_OPENED;
-
-    if (!acoustic)
-        return NO_ERROR;
-
-    audpre_index = calculate_audpre_table_index(mSampleRate);
-    tx_iir_index = (audpre_index * 2) + (hw->checkOutputStandby() ? 0 : 1);
-    LOGD("audpre_index = %d, tx_iir_index = %d\n", audpre_index, tx_iir_index);
-
-    /**
-     * If audio-preprocessing failed, we should not block record.
-     */
-    int (*msm72xx_set_audpre_params)(int, int);
-    msm72xx_set_audpre_params = (int (*)(int, int))::dlsym(acoustic, "msm72xx_set_audpre_params");
-    status = msm72xx_set_audpre_params(audpre_index, tx_iir_index);
-    if (status < 0)
-        LOGE("Cannot set audpre parameters");
-
-    int (*msm72xx_enable_audpre)(int, int, int);
-    msm72xx_enable_audpre = (int (*)(int, int, int))::dlsym(acoustic, "msm72xx_enable_audpre");
-    mAcoustics = acoustic_flags;
-    status = msm72xx_enable_audpre((int)acoustic_flags, audpre_index, tx_iir_index);
-    if (status < 0)
-        LOGE("Cannot enable audpre");
 
     return NO_ERROR;
 
@@ -1014,7 +1015,7 @@ ssize_t AudioHardware::AudioStreamInMSM72xx::read( void* buffer, ssize_t bytes)
 
     if (mState < AUDIO_INPUT_OPENED) {
         Mutex::Autolock lock(mHardware->mLock);
-        if (set(mHardware, mDevices, &mFormat, &mChannels, &mSampleRate, mAcoustics) != NO_ERROR) {
+        if (set(mHardware, mDevices, &mFormat, &mChannels, &mSampleRate) != NO_ERROR) {
             return -1;
         }
     }
