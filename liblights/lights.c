@@ -81,6 +81,9 @@ char const*const KEYBOARD_FILE
 char const*const BUTTON_FILE
         = "/sys/class/i2c-adapter/i2c-0/0-0040/btn_brightness";
 
+char const*const KEYBOARD_LED_FILE
+        = "/sys/class/i2c-adapter/i2c-0/0-0040/caps_fn_leds";
+
 /**
  * device methods
  */
@@ -171,25 +174,37 @@ set_light_backlight(struct light_device_t* dev,
 }
 
 static int
+set_light_caps(struct light_device_t* dev,
+        struct light_state_t const* state) 
+{
+    int err = 0;
+    int on = is_lit(state);
+    pthread_mutex_lock(&g_lock);
+    err = write_int(KEYBOARD_LED_FILE, on?4:5);
+    pthread_mutex_unlock(&g_lock);
+    return err;
+}
+
+static int
+set_light_fn(struct light_device_t* dev,
+        struct light_state_t const* state) 
+{
+    int err = 0;
+    int on = is_lit(state);
+    pthread_mutex_lock(&g_lock);
+    err = write_int(KEYBOARD_LED_FILE, on?2:3);
+    pthread_mutex_unlock(&g_lock);
+    return err;
+}
+
+static int
 set_light_keyboard(struct light_device_t* dev,
         struct light_state_t const* state)
 {
     int err = 0;
-    if (state->flashMode) {
-        /* keyboards don't flash, but we can use the fields to carry the keyboard
-         * lighting data... :)
-         * ALT - 2 for on, 3 for off
-         * Caps - 4 for on, 5 for off */
-       //LOGD("Write key state %i / %i",state->flashOnMS, state->flashMode);
-       pthread_mutex_lock(&g_lock);
-       write_int("/sys/class/i2c-adapter/i2c-0/0-0040/caps_fn_leds", state->flashOnMS);
-       pthread_mutex_unlock(&g_lock);
-    } else {
-
     pthread_mutex_lock(&g_lock);
     err = write_int(KEYBOARD_FILE, rgb_to_brightness(state));
     pthread_mutex_unlock(&g_lock);
-    }
     return err;
 }
 
@@ -413,6 +428,12 @@ static int open_lights(const struct hw_module_t* module, char const* name,
     /*else if (0 == strcmp(LIGHT_ID_ATTENTION, name)) {
         set_light = set_light_attention;
     }*/
+    else if (0 == strcmp(LIGHT_ID_CAPS, name)) {
+        set_light = set_light_caps;
+    }
+    else if (0 == strcmp(LIGHT_ID_FN, name)) {
+        set_light = set_light_fn;
+    }
     else {
         return -EINVAL;
     }
